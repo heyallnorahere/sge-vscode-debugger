@@ -1,0 +1,119 @@
+{
+	"name": "sge-vscode-debugger",
+	"displayName": "SGE Debugger",
+	"description": "A debugger frontend for SGE.",
+	"version": "1.0.0",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/yodasoda1219/sge-vscode-debugger.git"
+	},
+	"bugs": {
+		"url": "https://github.com/yodasoda1219/sge-vscode-debugger/issues"
+	},
+	"engines": {
+		"vscode": "^1.68.0",
+		"node": "^7.9.0"
+	},
+	"license": "Apache-2.0",
+	"categories": [
+		"Debuggers"
+	],
+	"activationEvents": [
+		"onCommand:sge-vscode-debugger.helloWorld"
+	],
+	"main": "./out/extension.js",
+	"contributes": {
+		"configuration": {},
+		"commands": [
+			{
+				"command": "sge-vscode-debugger.startSession",
+				"title": "Start debugger session",
+				"category": "Debug"
+			}
+		],
+		"breakpoints": [
+			{
+				"language": "csharp"
+			},
+			{
+				"language": "vb"
+			},
+			{
+				"language": "fsharp"
+			}
+		],
+		"debuggers": [
+			{
+				"type": "sge",
+				"label": "Attach to SGE",
+				"program": "./out/debugAdapter.js",
+				"runtime": "node",
+				"configurationAttributes": {
+					"attach": {
+						"properties": {
+							"address": {
+								"type": "string",
+								"description": "The address at which the SGE proxy debugger is hosted",
+								"default": "undefined"
+							},
+							"port": {
+								"type": "number",
+								"description": "The port on which the SGE proxy debugger is hosted",
+								"default": -1
+							}
+						}
+					}
+				},
+				"configurationSnippets": [
+					{
+						"label": "SGE Debugger: Attach",
+						"description": "Attaches to SGE's proxy debugger.",
+						"body": {
+							"name": "(sge) Attach",
+							"type": "sge",
+							"request": "attach"
+						}
+					}
+				],
+				"initialConfigurations": [
+					{
+						"name": "(sge) Attach",
+						"type": "sge",
+						"request": "attach"
+					}
+				]
+			}
+		]
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./",
+		"watch": "tsc -watch -p ./",
+		"pretest": "npm run compile && npm run lint",
+		"lint": "eslint src --ext ts",
+		"test": "node ./out/test/runTest.js",
+		"package": "vsce package",
+		"publish": "vsce publish",
+		"publish-prerelease": "vsce publish --pre-release"
+	},
+	"devDependencies": {
+		"@types/glob": "^7.2.0",
+		"@types/mocha": "^9.1.1",
+		"@types/node": "16.x",
+		"@types/vscode": "^1.68.0",
+		"@typescript-eslint/eslint-plugin": "^5.30.0",
+		"@typescript-eslint/parser": "^5.30.0",
+		"@vscode/test-electron": "^2.1.5",
+		"eslint": "^8.18.0",
+		"glob": "^8.0.3",
+		"mocha": "^10.0.0",
+		"typescript": "^4.7.4",
+		"vsce": "^2.9.2"
+	},
+	"dependencies": {
+		"@vscode/debugadapter": "^1.56.0",
+		"@vscode/debugadapter-testsupport": "^1.56.0",
+		"@vscode/debugprotocol": "^1.56.0",
+		"await-notify": "^1.0.1"
+	}
+}
