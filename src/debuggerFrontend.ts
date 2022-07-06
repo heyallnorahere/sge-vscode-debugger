@@ -211,16 +211,17 @@ export class SGEDebuggerFrontend extends debugadapter.DebugSession {
 		this.proxySettings.lineStart = args.linesStartAt1 ? 1 : 0;
 		this.proxySettings.useUri = args.pathFormat === 'uri';
 
-		response.body = {};
+		response.body = {
+		    // freaks out over namespaces and classes
+            supportsEvaluateForHovers: false,
 
-		// freaks out over namespaces and classes
-		response.body.supportsEvaluateForHovers = false;
+            supportsRestartRequest: true,
+            supportsConfigurationDoneRequest: false,
 
-		response.body.supportsConfigurationDoneRequest = false;
-		response.body.supportsFunctionBreakpoints = false;
-		response.body.supportsConditionalBreakpoints = false;
-		response.body.exceptionBreakpointFilters = [];
-
+            supportsFunctionBreakpoints: false,
+            supportsConditionalBreakpoints: false,
+            exceptionBreakpointFilters: []
+        };
 
 		this.sendResponse(response);
 		this.sendEvent(new debugadapter.InitializedEvent());
@@ -238,22 +239,33 @@ export class SGEDebuggerFrontend extends debugadapter.DebugSession {
 	protected attachRequest(response: DebugProtocol.AttachResponse, args: AttachRequestArguments, request: DebugProtocol.Request | undefined): void {
 		this.terminated = false;
 		this.clientSocket = new Socket();
+        this.connectedEvent = new Subject();
 
 		this.clientSocket.on('ready', async () => {
+			this.connected = true;
 			console.log('connected to debugger');
 
-			this.connected = true;
 			await this.sendDebuggerRequest('setSettings', this.proxySettings);
+            this.connectedEvent.notifyAll();
+
+            this.sendResponse(response);
 		});
 
 		this.clientSocket.on('close', () => {
 			console.log('disconnected from debugger');
 
+            const failed = !this.connected;
 			this.connected = false;
+
+            this.connectedEvent = undefined;
 			if (!this.terminated) {
 				this.sendEvent(new debugadapter.TerminatedEvent());
 				this.terminated = true;
 			}
+
+            if (failed) {
+                this.sendErrorResponse(response, 1104, 'Failed to connect!');
+            }
 		});
 
 		this.clientSocket.on('data', data => {
@@ -265,9 +277,11 @@ export class SGEDebuggerFrontend extends debugadapter.DebugSession {
 
 		console.log(`connecting to ${args.address}:${args.port}`);
 		this.clientSocket.connect(args.port, args.address);
-
-		this.sendResponse(response);
 	}
+
+    protected restartRequest(response: DebugProtocol.RestartResponse): void {
+        this.sendErrorResponse(response, 3014, 'Restarting is not supported!');
+    }
 
 	protected async nextRequest(response: DebugProtocol.NextResponse): Promise<void> {
 		await this.sendDebuggerRequest('next', null);
@@ -356,15 +370,27 @@ export class SGEDebuggerFrontend extends debugadapter.DebugSession {
 	}
 
 	protected async setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): Promise<void> {
-		const breakpointsSet = await this.sendDebuggerRequest('setBreakpoints', args);
-		if (!breakpointsSet) {
-			this.sendErrorResponse(response, 1104, 'Failed to set breakpoints!');
-			return;
-		}
-
-		response.body = {
-			breakpoints: breakpointsSet
-		};
+        if (this.connected) {
+            const breakpointsSet = await this.sendDebuggerRequest('setBreakpoints', args);
+            if (!breakpointsSet) {
+                this.sendErrorResponse(response, 1104, 'Failed to set breakpoints!');
+                return;
+            }
+    
+            response.body = {
+                breakpoints: breakpointsSet
+            };
+        } else {
+            if (!this.terminated) {
+                await this.connectedEvent.wait(Infinity);
+                await this.setBreakPointsRequest(response, args);
+                return;
+            } else {
+                response.body = {
+                    breakpoints: []
+                };
+            }
+        }
 
 		this.sendResponse(response);
 	}
@@ -606,6 +632,7 @@ export class SGEDebuggerFrontend extends debugadapter.DebugSession {
 				this.pendingResponses = new Dictionary();
 			}
 
+            console.log(`request: ${message.body.command}, response: ${JSON.stringify(response)}`);
 			return response;
 		} else {
 			return undefined;
@@ -619,4 +646,5 @@ export class SGEDebuggerFrontend extends debugadapter.DebugSession {
 	private terminated: boolean;
 	private pendingResponses: Dictionary<number, PendingResponse>;
 	private currentId: number;
+    private connectedEvent: Subject;
 }
