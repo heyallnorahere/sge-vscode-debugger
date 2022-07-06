@@ -21,18 +21,24 @@ import * as net from 'net';
 class ExtensionContext {
 	public constructor(context: vscode.ExtensionContext) {
 		this.context = context;
-		this.id = context.extension.id;
-		this.configuration = vscode.workspace.getConfiguration(this.id);
+		this.configuration = vscode.workspace.getConfiguration(this.name);
 	}
 
-	public push(...items: { dispose(): any }[]) {
+	public push(...items: { dispose(): any }[]): number {
 		this.context.subscriptions.concat(items);
 		return items.length;
 	}
 
-	public context;
-	public id;
-	public configuration;
+	public get id(): string {
+		return this.context.extension.id;
+	}
+
+	public get name(): string {
+		return this.context.extension.packageJSON.name;
+	}
+
+	public context: vscode.ExtensionContext;
+	public configuration: vscode.WorkspaceConfiguration;
 }
 
 let extensionContext: ExtensionContext | undefined = undefined;
@@ -45,11 +51,11 @@ class SGEConfigurationProvider implements vscode.DebugConfigurationProvider {
 		}
 
 		if (!config.address || config.address === 'undefined') {
-			config.address = extensionContext!.configuration.get('defaultAddress', '127.0.0.1');
+			config.address = extensionContext!.configuration.get('defaultAddress');
 		}
 
 		if (!config.port || config.port < 0) {
-			config.port = extensionContext!.configuration.get('defaultPort', 62223);
+			config.port = extensionContext!.configuration.get('defaultPort');
 		}
 
 		return config;
@@ -110,7 +116,8 @@ export function activate(context: vscode.ExtensionContext) {
 	extensionContext.push(vscode.debug.registerDebugConfigurationProvider('sge', configProvider));
 
 	const factory = new SGEDebugAdapterFactory(AdapterRunMode.inline);
-	extensionContext.push(vscode.debug.registerDebugAdapterDescriptorFactory('sge', factory));
+	const factoryHandle = vscode.debug.registerDebugAdapterDescriptorFactory('sge', factory);
+	extensionContext.push(factoryHandle, factory);
 }
 
 export function deactivate() {

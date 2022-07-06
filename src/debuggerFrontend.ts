@@ -27,6 +27,19 @@ interface AttachRequestArguments extends DebugProtocol.AttachRequestArguments {
 	port: number;
 }
 
+interface DebuggerScope {
+	name: string;
+	variableSetId: number;
+	expensive: boolean;
+}
+
+interface DebuggerVariable {
+	name: string;
+	value: string;
+	type: string;
+	childrenSetId: number;
+}
+
 class DebuggerMessage {
 	public constructor(type: string, body: any) {
 		this.type = type;
@@ -140,9 +153,9 @@ class ProxySettings {
 	public useUri: boolean;
 }
 
-export class SGEDebuggerFrontend extends debugadapter.LoggingDebugSession {
+export class SGEDebuggerFrontend extends debugadapter.DebugSession {
 	public constructor() {
-		super('sge-vscode-debugger.log');
+		super();
 
 		this.setDebuggerLinesStartAt1(true);
 		this.setDebuggerColumnsStartAt1(true);
@@ -162,7 +175,9 @@ export class SGEDebuggerFrontend extends debugadapter.LoggingDebugSession {
 		this.proxySettings.useUri = args.pathFormat === 'uri';
 
 		response.body = {};
-		response.body.supportsEvaluateForHovers = true; // i suppose
+
+		// freaks out over namespaces and classes
+		response.body.supportsEvaluateForHovers = false;
 
 		response.body.supportsConfigurationDoneRequest = false;
 		response.body.supportsFunctionBreakpoints = false;
@@ -183,16 +198,16 @@ export class SGEDebuggerFrontend extends debugadapter.LoggingDebugSession {
 		this.sendResponse(response);
 	}
 
-	protected attachRequest(response: DebugProtocol.AttachResponse, args: AttachRequestArguments, request: DebugProtocol.AttachRequest): void {
+	protected attachRequest(response: DebugProtocol.AttachResponse, args: AttachRequestArguments, request: DebugProtocol.Request | undefined): void {
 		this.terminated = false;
 		this.clientSocket = new Socket();
 
 		this.clientSocket.on('ready', async () => {
 			console.log('connected to debugger');
+
 			this.connected = true;
-	
-			const request = new DebuggerRequest('setSettings', this.proxySettings);
-			await this.sendDebuggerRequest(request);	
+			const a = await this.sendDebuggerRequest('setSettings', this.proxySettings);
+			console.log(a);
 		});
 
 		this.clientSocket.on('close', () => {
@@ -218,7 +233,154 @@ export class SGEDebuggerFrontend extends debugadapter.LoggingDebugSession {
 		this.sendResponse(response);
 	}
 
+	protected async nextRequest(response: DebugProtocol.NextResponse): Promise<void> {
+		await this.sendDebuggerRequest('next', null);
+		this.sendResponse(response);
+	}
+
+	protected async continueRequest(response: DebugProtocol.ContinueResponse): Promise<void> {
+		await this.sendDebuggerRequest('continue', null);
+		this.sendResponse(response);
+	}
+
+	protected async stepInRequest(response: DebugProtocol.StepInResponse): Promise<void> {
+		await this.sendDebuggerRequest('stepIn', null);
+		this.sendResponse(response);
+	}
+
+	protected async stepOutRequest(response: DebugProtocol.StepOutResponse): Promise<void> {
+		await this.sendDebuggerRequest('stepOut', null);
+		this.sendResponse(response);
+	}
+
+	protected async pauseRequest(response: DebugProtocol.PauseResponse): Promise<void> {
+		await this.sendDebuggerRequest('pause', null);
+		this.sendResponse(response);
+	}
+
+	protected async stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): Promise<void> {
+		const trace = await this.sendDebuggerRequest('stackTrace', args);
+		if (!trace) {
+			this.sendErrorResponse(response, 1104, 'Failed to get stack trace');
+			return;
+		}
+
+		response.body = trace;
+		this.sendResponse(response);
+	}
+
+	protected sourceRequest(response: DebugProtocol.SourceResponse): void {
+		this.sendErrorResponse(response, 1020, 'No source available');
+	}
+
+	protected async scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): Promise<void> {
+		const scopes = await this.sendDebuggerRequest('scopes', args);
+		if (!scopes) {
+			this.sendErrorResponse(response, 1104, 'Failed to get scopes');
+			return;
+		}
+
+		response.body = {
+			scopes: this.convertScopes(scopes)
+		};
+		
+		this.sendResponse(response);
+	}
+
+	protected async variablesRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments): Promise<void> {
+		const commandArgs = {
+			variableSetId: args.variablesReference,
+			expandName: '[Expand]'
+		};
+
+		const variables = await this.sendDebuggerRequest('variables', commandArgs);
+		if (!variables) {
+			this.sendErrorResponse(response, 1104, 'Failed to get children');
+		}
+
+		response.body = {
+			variables: this.convertVariables(variables)
+		};
+
+		this.sendResponse(response);
+	}
+
+	protected async threadsRequest(response: DebugProtocol.ThreadsResponse): Promise<void> {
+		const threads = await this.sendDebuggerRequest('threads', null);
+		if (!threads) {
+			this.sendErrorResponse(response, 1104, 'Failed to get threads!');
+			return;
+		}
+
+		response.body = {
+			threads: threads
+		};
+
+		this.sendResponse(response);
+	}
+
+	protected async setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): Promise<void> {
+		const breakpointsSet = await this.sendDebuggerRequest('setBreakpoints', args);
+		if (!breakpointsSet) {
+			this.sendErrorResponse(response, 1104, 'Failed to set breakpoints!');
+			return;
+		}
+
+		response.body = {
+			breakpoints: breakpointsSet
+		};
+
+		this.sendResponse(response);
+	}
+
+	protected async evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): Promise<void> {
+		const result = await this.sendDebuggerRequest('evaluate', args);
+		if (!result) {
+			this.sendErrorResponse(response, 1104, 'Failed to evaluate expression!');
+			return;
+		}
+
+		if (result.error) {
+			this.sendErrorResponse(response, 3014, `Failed to evaluate expression: ${result.error}`);
+			return;
+		}
+
+		response.body = {
+			result: result.value,
+			variablesReference: result.childrenSetId
+		};
+
+		this.sendResponse(response);
+	}
+
 	// implementation
+
+	private convertScopes(response: DebuggerScope[]): DebugProtocol.Scope[] {
+		const result: DebugProtocol.Scope[] = [];
+		response.forEach((value, index, array) => {
+			result.push({
+				name: value.name,
+				variablesReference: value.variableSetId,
+				expensive: value.expensive
+			});
+		});
+
+		return result;
+	}
+
+	private convertVariables(response: DebuggerVariable[]): DebugProtocol.Variable[] {
+		const result: DebugProtocol.Variable[] = [];
+		response.forEach((value, index, array) => {
+			result.push({
+				name: value.name,
+				value: value.value,
+				type: value.type,
+				variablesReference: value.childrenSetId
+			});
+		});
+
+		return result;
+	}
 
 	// very messy function, this is why i hate javascript
 	private processData(): void {
@@ -274,7 +436,6 @@ export class SGEDebuggerFrontend extends debugadapter.LoggingDebugSession {
 
 		// couldn't figure out how to copy
 		const effectiveRanges = removeRanges.slice(0, removeRanges.length);
-
 		for (let i = 0; i < effectiveRanges.length; i++) {
 			const range = effectiveRanges[i];
 			if (!range.remove((start, length) => this.buffer.remove(start, length))) {
@@ -317,16 +478,61 @@ export class SGEDebuggerFrontend extends debugadapter.LoggingDebugSession {
 
 	private relayEvent(event: DebuggerEvent): void {
 		console.log(`received event: ${event.type}`);
-		console.log(`event category: ${event.category}`);
-		console.log(`context: ${JSON.stringify(event.context)}`);
+
+		let reason: string;
+		switch (event.type) {
+			case 'debuggerStep':
+				reason = 'step';
+				break;
+			case 'breakpointHit':
+				reason = 'breakpoint';
+				break;
+			case 'handledExceptionThrown':
+			case 'unhandledExceptionThrown':
+				reason = 'exception';
+				break;
+			case 'threadStarted':
+				reason = 'started';
+				break;
+			case 'threadExited':
+				reason = 'exited';
+				break;
+			default:
+				reason = event.type;
+				break;
+		}
 		
-		// todo: relay to vscode
+		const context = event.context;
+		let sentEvent: DebugProtocol.Event;
+		switch (event.category) {
+			case 'stopped':
+				sentEvent = new debugadapter.StoppedEvent(reason, context.thread, context.message);
+				break;
+			case 'thread':
+				sentEvent = new debugadapter.ThreadEvent(reason, context.id);
+				break;
+			case 'output':
+				if (reason === 'debuggerOutput') {
+					const category = context.stderr ? 'stderr' : 'stdout';
+					sentEvent = new debugadapter.OutputEvent(context.text + '\n', category);
+
+					break;
+				}
+
+				// debuggee output isn't handled (yet)
+			default:
+				return; // not handled
+		}
+
+		this.sendEvent(sentEvent);
 	}
 
-	private async sendDebuggerRequest(request: DebuggerRequest): Promise<any> {
-		console.log(`sending request: ${request.command}`);
+	private async sendDebuggerRequest(command: string, args: any): Promise<any> {
+		console.log(`sending request: ${command}`);
 
+		const request = new DebuggerRequest(command, args);
 		const message = new DebuggerMessage('request', request);
+
 		return await this.sendDebuggerMessage(message, true);
 	}
 
