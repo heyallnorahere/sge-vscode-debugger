@@ -79,3 +79,42 @@ export class Stack<T> {
 
 	private array: T[];
 }
+
+export class Dictionary<K, V> {
+	public constructor() {
+		this.object = {};
+	}
+
+	public set(key: K, value: V) {
+		this.object[key] = value;
+	}
+
+	public get(key: K | string): V | undefined {
+		return this.object[key];
+	}
+
+	public exists(key: K): boolean {
+		return key in this.object;
+	}
+
+	public stringExists(key: string): boolean {
+		return key in this.object;
+	}
+
+	public iterate(callback: (key: string, value: V) => void): void {
+		for (let key in this.object) {
+			callback(key, this.get(key)!);
+		}
+	}
+
+	public get size(): number {
+		let count = 0;
+		this.iterate((key, value) => {
+			count++;
+		});
+
+		return count;
+	}
+
+	private object: any;
+}

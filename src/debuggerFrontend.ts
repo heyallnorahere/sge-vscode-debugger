@@ -18,7 +18,7 @@ import * as debugadapter from '@vscode/debugadapter';
 import { DebugProtocol } from '@vscode/debugprotocol';
 import { Socket } from 'net';
 import { Subject } from 'await-notify';
-import { Stack, Queue } from './utilities';
+import { Stack, Queue, Dictionary } from './utilities';
 
 const encoding = 'utf-8';
 
@@ -41,13 +41,15 @@ interface DebuggerVariable {
 }
 
 class DebuggerMessage {
-	public constructor(type: string, body: any) {
+	public constructor(type: string, body: any, id: number | undefined) {
 		this.type = type;
 		this.body = body;
+		this.id = id;
 	}
 
 	public type: string;
 	public body: any;
+	public id?: number;
 }
 
 class DebuggerRequest {
@@ -70,6 +72,41 @@ class DebuggerEvent {
 	public type: string;
 	public category: string;
 	public context: any;
+}
+
+class PendingResponse {
+	public constructor() {
+		this.event = new Subject();
+		this.isSet = false;
+	}
+
+	public set(value: any): boolean {
+		if (this.isSet) {
+			return false;
+		}
+
+		this.value = value;
+		this.isSet = true;
+		this.event.notify();
+
+		return true;
+	}
+
+	public async wait(): Promise<any> {
+		if (!this.isSet) {
+			await this.event.wait(Infinity);
+		}
+		
+		return this.value;
+	}
+
+	public get isFinished(): boolean {
+		return this.isSet;
+	}
+
+	private value: any;
+	private event: Subject;
+	private isSet: boolean;
 }
 
 class SocketBuffer {
@@ -121,8 +158,8 @@ class BufferRemoveRange {
 		return callback(this.start, this.length);
 	}
 
-	public start;
-	public length;
+	public start: number;
+	public length: number;
 }
 
 class Scope {
@@ -163,9 +200,9 @@ export class SGEDebuggerFrontend extends debugadapter.DebugSession {
 		this.proxySettings = new ProxySettings(1, false);
 		this.connected = false;
 		this.buffer = new SocketBuffer();
-		this.responseQueue = new Queue();
 		this.terminated = true;
-		this.responseReceived = new Subject();
+		this.pendingResponses = new Dictionary();
+		this.currentId = 0;
 	}
 
 	// requests
@@ -206,8 +243,7 @@ export class SGEDebuggerFrontend extends debugadapter.DebugSession {
 			console.log('connected to debugger');
 
 			this.connected = true;
-			const a = await this.sendDebuggerRequest('setSettings', this.proxySettings);
-			console.log(a);
+			await this.sendDebuggerRequest('setSettings', this.proxySettings);
 		});
 
 		this.clientSocket.on('close', () => {
@@ -459,8 +495,13 @@ export class SGEDebuggerFrontend extends debugadapter.DebugSession {
 			if (message) {
 				switch (message.type) {
 					case 'response':
-						this.responseQueue.push(message.body);
-						this.responseReceived.notify();
+						const id = message.id!;
+						if (this.pendingResponses.exists(id)) {
+							this.pendingResponses.get(id)?.set(message.body);
+						} else {
+							console.error('mismatched response');
+						}
+
 						break;
 					case 'event':
 						this.relayEvent(message.body);
@@ -531,7 +572,7 @@ export class SGEDebuggerFrontend extends debugadapter.DebugSession {
 		console.log(`sending request: ${command}`);
 
 		const request = new DebuggerRequest(command, args);
-		const message = new DebuggerMessage('request', request);
+		const message = new DebuggerMessage('request', request, this.currentId++);
 
 		return await this.sendDebuggerMessage(message, true);
 	}
@@ -546,10 +587,24 @@ export class SGEDebuggerFrontend extends debugadapter.DebugSession {
 		this.clientSocket!.write(bytes);
 
 		if (expectResponse) {
-			await this.responseReceived.wait(Infinity);
+			const id = message.id!;
 
-			const response = this.responseQueue.peek();
-			this.responseQueue.pop();
+			this.pendingResponses.set(id, new PendingResponse());
+			const response = await this.pendingResponses.get(id)?.wait();
+
+			let finishedCount = 0;
+			let totalCount = 0;
+
+			this.pendingResponses.iterate((key, value) => {
+				totalCount++;
+				if (value.isFinished) {
+					finishedCount++;
+				}
+			});
+
+			if (finishedCount === totalCount) {
+				this.pendingResponses = new Dictionary();
+			}
 
 			return response;
 		} else {
@@ -561,7 +616,7 @@ export class SGEDebuggerFrontend extends debugadapter.DebugSession {
 	private clientSocket?: Socket;
 	private connected: boolean;
 	private buffer: SocketBuffer;
-	private responseQueue: Queue<any>;
 	private terminated: boolean;
-	private responseReceived: Subject;
+	private pendingResponses: Dictionary<number, PendingResponse>;
+	private currentId: number;
 }
