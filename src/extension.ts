@@ -15,15 +15,104 @@
 */
 
 import * as vscode from 'vscode';
+import { SGEDebuggerFrontend } from './debuggerFrontend';
+import * as net from 'net';
 
-export function activate(context: vscode.ExtensionContext) {
-	let disposable = vscode.commands.registerCommand('sge-vscode-debugger.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from SGE Debugger!');
-	});
+class ExtensionContext {
+	public constructor(context: vscode.ExtensionContext) {
+		this.context = context;
+		this.id = context.extension.id;
+		this.configuration = vscode.workspace.getConfiguration(this.id);
+	}
 
-	context.subscriptions.push(disposable);
+	public push(...items: { dispose(): any }[]) {
+		this.context.subscriptions.concat(items);
+		return items.length;
+	}
+
+	public context;
+	public id;
+	public configuration;
 }
 
-export function deactivate() {}
+let extensionContext: ExtensionContext | undefined = undefined;
+class SGEConfigurationProvider implements vscode.DebugConfigurationProvider {
+	resolveDebugConfiguration(folder: vscode.WorkspaceFolder | undefined, config: vscode.DebugConfiguration, token?: vscode.CancellationToken): vscode.ProviderResult<vscode.DebugConfiguration> {
+		if (!config.type && !config.request && !config.name) {
+			config.type = 'sge';
+			config.name = '(sge) Attach';
+			config.request = 'attach';
+		}
+
+		if (!config.address || config.address === 'undefined') {
+			config.address = extensionContext!.configuration.get('defaultAddress', '127.0.0.1');
+		}
+
+		if (!config.port || config.port < 0) {
+			config.port = extensionContext!.configuration.get('defaultPort', 62223);
+		}
+
+		return config;
+	}
+}
+
+enum AdapterRunMode {
+	external,
+	server,
+	inline,
+}
+
+class SGEDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
+	public constructor(runMode: AdapterRunMode) {
+		this.runMode = runMode;
+		this.server = undefined;
+	}
+
+	createDebugAdapterDescriptor(session: vscode.DebugSession, executable: vscode.DebugAdapterExecutable | undefined): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
+		switch (this.runMode) {
+			case AdapterRunMode.external:
+				if (!executable) {
+					return undefined;
+				}
+
+				return executable;
+			case AdapterRunMode.server:
+				if (!this.server) {
+					this.server = net.createServer(socket => {
+						const session = new SGEDebuggerFrontend();
+						session.setRunAsServer(true);
+						session.start(socket, socket);
+					}).listen(0); // random port
+				}
+
+				const port = (this.server.address() as net.AddressInfo).port;
+				return new vscode.DebugAdapterServer(port);
+			case AdapterRunMode.inline:
+				return new vscode.DebugAdapterInlineImplementation(new SGEDebuggerFrontend());
+			default:
+				return undefined;
+		}
+	}
+
+	dispose() {
+		this.server?.close();
+	}
+
+	private runMode: AdapterRunMode;
+	private server?: net.Server;
+}
+
+export function activate(context: vscode.ExtensionContext) {
+	console.log('extension activated');
+	extensionContext = new ExtensionContext(context);
+
+	const configProvider = new SGEConfigurationProvider();
+	extensionContext.push(vscode.debug.registerDebugConfigurationProvider('sge', configProvider));
+
+	const factory = new SGEDebugAdapterFactory(AdapterRunMode.inline);
+	extensionContext.push(vscode.debug.registerDebugAdapterDescriptorFactory('sge', factory));
+}
+
+export function deactivate() {
+	console.log('extension deactivated');
+}

@@ -27,7 +27,7 @@ args.forEach((val, index, array) => {
     }
 });
 
-const session = new SGEDebuggerFrontend("sge-vscode-debugger.log");
+const session = new SGEDebuggerFrontend();
 if (port > 0) {
     console.log(`listening for vscode on port ${port}`);
     net.createServer(socket => {

@@ -19,18 +19,27 @@
 		"Debuggers"
 	],
 	"activationEvents": [
-		"onCommand:sge-vscode-debugger.helloWorld"
+		"onDebug"
 	],
 	"main": "./out/extension.js",
 	"contributes": {
-		"configuration": {},
-		"commands": [
-			{
-				"command": "sge-vscode-debugger.startSession",
-				"title": "Start debugger session",
-				"category": "Debug"
+		"configuration": {
+			"title": "SGE Debugger",
+			"properties": {
+				"sge-vscode-debugger.defaultAddress": {
+					"type": "string",
+					"default": "127.0.0.1",
+					"title": "Default debugger address",
+					"description": "The address of the proxy debugger to connect to when not specified in the debug configuration."
+				},
+				"sge-vscode-debugger.defaultPort": {
+					"type": "number",
+					"default": 62223,
+					"title": "Default debugger port",
+					"description": "The port of the proxy debugger to connect to when not specified in the debug configuration."
+				}
 			}
-		],
+		},
 		"breakpoints": [
 			{
 				"language": "csharp"
@@ -98,22 +107,19 @@
 	},
 	"devDependencies": {
 		"@types/glob": "^7.2.0",
-		"@types/mocha": "^9.1.1",
 		"@types/node": "16.x",
 		"@types/vscode": "^1.68.0",
 		"@typescript-eslint/eslint-plugin": "^5.30.0",
 		"@typescript-eslint/parser": "^5.30.0",
 		"@vscode/test-electron": "^2.1.5",
+		"await-notify": "^1.0.1",
 		"eslint": "^8.18.0",
 		"glob": "^8.0.3",
-		"mocha": "^10.0.0",
 		"typescript": "^4.7.4",
 		"vsce": "^2.9.2"
 	},
 	"dependencies": {
 		"@vscode/debugadapter": "^1.56.0",
-		"@vscode/debugadapter-testsupport": "^1.56.0",
-		"@vscode/debugprotocol": "^1.56.0",
-		"await-notify": "^1.0.1"
+		"@vscode/debugprotocol": "^1.56.0"
 	}
 }
