@@ -1,0 +1,15 @@
+name: build
+on: [ push ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkpoint@v2
+      - name: setup node
+        with:
+          node-version: latest
+      - name: install dependencies
+        run: npm install
+      - name: build vsix
+        run: npm run package
